@@ -7,12 +7,30 @@ import numpy as np
 def pearson_correlation(x, y):
     x = x.flatten()
     y = y.flatten()
+
+    # Validate inputs
+    if x.shape != y.shape:
+        raise ValueError("Inputs must have the same shape")
+    if torch.any(torch.isnan(x)) or torch.any(torch.isnan(y)):
+        raise ValueError("Inputs contain NaN values")
+    if torch.any(torch.isinf(x)) or torch.any(torch.isinf(y)):
+        raise ValueError("Inputs contain infinite values")
+
     x_centered = x - x.mean()
     y_centered = y - y.mean()
     cov = torch.dot(x_centered, y_centered) / (x.shape[0] - 1)
     std_x = x_centered.norm() / ((x.shape[0] - 1) ** 0.5)
     std_y = y_centered.norm() / ((y.shape[0] - 1) ** 0.5)
-    return cov / (std_x * std_y)
+
+    # Check for zero variance or near-zero denominator
+    if std_x < 1e-10 or std_y < 1e-10:
+        return float('nan')  # Undefined correlation due to zero variance
+
+    corr = cov / ((std_x * std_y) + 1e-3)
+
+    if torch.isinf(corr):
+        return torch.tensor(-1.0, dtype=x.dtype)
+    return corr
 
 def plot_bchw_tensor(tensor, title="Images", save_path=None):
     """

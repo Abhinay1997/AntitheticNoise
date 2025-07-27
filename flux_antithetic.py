@@ -98,6 +98,7 @@ def main(model_id="black-forest-labs/FLUX.1-schnell"):
         plot_bchw_tensor(random_images, title=f"Random Images: {prompt}", 
                          save_path=f"random_images_{model_id.split('/')[-1]}_{prompt.replace(' ', '_')}.jpg")
     print(storage)
+    torch.save(storage, f"correlation_results_{model_id.split('/')[-1]}.pt")
 
 
 if __name__ == "__main__":
