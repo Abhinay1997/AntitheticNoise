@@ -1,15 +1,12 @@
 import torch
 import argparse
-from test_prompts import prompts
+import os
+from test_prompts import short_prompts, long_prompts
 from utils import pearson_correlation, plot_bchw_tensor
 from diffusers import FluxPipeline
 
-def main(model_id="black-forest-labs/FLUX.1-schnell"):
-    # Load Pipeline
-    pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
-    pipe._callback_tensor_inputs = ["latents", "prompt_embeds", "noise_pred", "prompt"]
-    pipe.to('cuda')
-
+def run_analysis(pipe, prompts, output_dir, model_id):
+    os.makedirs(output_dir, exist_ok=True)
     # Setup the params
     height = 1024
     width = 1024
@@ -44,16 +41,6 @@ def main(model_id="black-forest-labs/FLUX.1-schnell"):
             "pixel_random": None,
             "pixel_anti": None
         }
-    """
-    {
-       "prompt": {
-          "latents": (t, corr)...........
-          "noise_pred": (t, corr)........
-          "pixel_random": corr
-          "pixel_anti": corr
-        }
-    }
-    """
 
     def antithetic_callback(pipe,i, t, callback_kwargs):
         noise_pred = callback_kwargs['noise_pred']
@@ -63,7 +50,7 @@ def main(model_id="black-forest-labs/FLUX.1-schnell"):
         storage[prompt]["noise_pred"].append((t, pearson_correlation(noise_pred[0], noise_pred[1])))
         return callback_kwargs
     
-    for prompt in prompts:
+    for idx, prompt in enumerate(prompts):
         prompt_input = [prompt] * 2
         antithetic_images = pipe(
             prompt_input,
@@ -94,11 +81,23 @@ def main(model_id="black-forest-labs/FLUX.1-schnell"):
         storage[prompt]['pixel_random'] = pearson_correlation(random_images[0], random_images[1])
 
         plot_bchw_tensor(antithetic_images, title=f"Antithetic Images: {prompt}", 
-                         save_path=f"antithetic_images_{model_id.split('/')[-1]}_{prompt.replace(' ', '_')}.jpg")
+                         save_path=os.path.join(output_dir, f"antithetic_images_{model_id.split('/')[-1]}_{idx}.jpg"))
         plot_bchw_tensor(random_images, title=f"Random Images: {prompt}", 
-                         save_path=f"random_images_{model_id.split('/')[-1]}_{prompt.replace(' ', '_')}.jpg")
+                         save_path=os.path.join(output_dir, f"random_images_{model_id.split('/')[-1]}_{idx}.jpg"))
     print(storage)
-    torch.save(storage, f"correlation_results_{model_id.split('/')[-1]}.pt")
+    torch.save(storage, os.path.join(output_dir, f"correlation_results_{model_id.split('/')[-1]}.pt"))
+
+def main(model_id="black-forest-labs/FLUX.1-schnell"):
+    # Load Pipeline
+    pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
+    pipe._callback_tensor_inputs = ["latents", "prompt_embeds", "noise_pred", "prompt"]
+    pipe.to('cuda')
+
+    # Run for short prompts
+    run_analysis(pipe, short_prompts, f"flux_results/short_prompts", model_id)
+    
+    # Run for long prompts
+    run_analysis(pipe, long_prompts, f"flux_results/long_prompts", model_id)
 
 
 if __name__ == "__main__":

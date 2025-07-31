@@ -1,16 +1,12 @@
 import torch
 import argparse
-from test_prompts import prompts
+import os
+from test_prompts import short_prompts, long_prompts
 from utils import pearson_correlation, plot_bchw_tensor
 from diffusers import AutoencoderKLWan, WanPipeline
 
-def main(model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers"):
-    # Load Pipeline
-    vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
-    pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=torch.bfloat16)
-    pipe.enable_model_cpu_offload()
-    pipe._callback_tensor_inputs = ["latents", "prompt_embeds", "noise_pred", "prompt"]
-
+def run_analysis(pipe, prompts, output_dir, model_id):
+    os.makedirs(output_dir, exist_ok=True)
     # Setup the params
     height = 480
     width = 832
@@ -22,7 +18,7 @@ def main(model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers"):
     batch_size = 2
     guidance_scale = 5.0
     max_sequence_length = 512
-    num_inference_steps = 12
+    num_inference_steps = 30
 
     #antithetic
     anti_latents = torch.randn((batch_size//2, num_channels_latents, num_latent_frames, lh, lw), generator=torch.Generator('cpu').manual_seed(34239))
@@ -41,16 +37,6 @@ def main(model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers"):
             "pixel_random": None,
             "pixel_anti": None
         }
-    """
-    {
-       "prompt": {
-          "latents": (t, corr)...........
-          "noise_pred": (t, corr)........
-          "pixel_random": corr
-          "pixel_anti": corr
-        }
-    }
-    """
 
     def antithetic_callback(pipe,i, t, callback_kwargs):
         noise_pred = callback_kwargs['noise_pred']
@@ -60,7 +46,7 @@ def main(model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers"):
         storage[prompt]["noise_pred"].append((t, pearson_correlation(noise_pred[0], noise_pred[1])))
         return callback_kwargs
     
-    for prompt in prompts:
+    for idx, prompt in enumerate(prompts):
         prompt_input = [prompt] * 2
         antithetic_images = pipe(
             prompt_input,
@@ -91,11 +77,24 @@ def main(model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers"):
         storage[prompt]['pixel_random'] = pearson_correlation(random_images[0], random_images[1])
 
         plot_bchw_tensor(antithetic_images[:, 0, :, :, :], title=f"Antithetic Images: {prompt}", 
-                         save_path=f"antithetic_images_{model_id.split('/')[-1]}_{prompt.replace(' ', '_')}.jpg")
+                         save_path=os.path.join(output_dir, f"antithetic_images_{model_id.split('/')[-1]}_{idx}.jpg"))
         plot_bchw_tensor(random_images[:, 0, :, :, :], title=f"Random Images: {prompt}", 
-                         save_path=f"random_images_{model_id.split('/')[-1]}_{prompt.replace(' ', '_')}.jpg")
+                         save_path=os.path.join(output_dir, f"random_images_{model_id.split('/')[-1]}_{idx}.jpg"))
     print(storage)
-    torch.save(storage, f"correlation_results_{model_id.split('/')[-1]}.pt")
+    torch.save(storage, os.path.join(output_dir, f"correlation_results_{model_id.split('/')[-1]}.pt"))
+
+def main(model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers"):
+    # Load Pipeline
+    vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
+    pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=torch.bfloat16)
+    pipe.enable_model_cpu_offload()
+    pipe._callback_tensor_inputs = ["latents", "prompt_embeds", "noise_pred", "prompt"]
+
+    # Run for short prompts
+    run_analysis(pipe, short_prompts, f"wan_results/short_prompts", model_id)
+    
+    # Run for long prompts
+    run_analysis(pipe, long_prompts, f"wan_results/long_prompts", model_id)
 
 
 if __name__ == "__main__":
